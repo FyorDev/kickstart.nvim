@@ -560,6 +560,56 @@ do
   vim.keymap.set('n', '<leader>sr', builtin.resume, { desc = '[S]earch [R]esume' })
   vim.keymap.set('n', '<leader>s.', builtin.oldfiles, { desc = '[S]earch Recent Files ("." for repeat)' })
   vim.keymap.set('n', '<leader>sc', builtin.commands, { desc = '[S]earch [C]ommands' })
+  -- Search through staged, unstaged, untracked files. Jump to the first linechange
+  vim.keymap.set('n', '<leader>sx', function()
+    local actions = require 'telescope.actions'
+    local action_state = require 'telescope.actions.state'
+    builtin.git_status {
+      attach_mappings = function(prompt_bufnr)
+        actions.select_default:replace(function()
+          local entry = action_state.get_selected_entry()
+          actions.close(prompt_bufnr)
+          if not entry then
+            return
+          end
+          vim.cmd.edit(vim.fn.fnameescape(entry.path))
+          local out = vim.fn.systemlist { 'git', 'diff', '--no-ext-diff', '-U0', 'HEAD', '--', entry.path }
+          for _, line in ipairs(out) do
+            local start = line:match '^@@ %-%d+,?%d* %+(%d+)'
+            if start then
+              vim.api.nvim_win_set_cursor(0, { math.max(tonumber(start), 1), 0 })
+              vim.cmd 'normal! zz'
+              break
+            end
+          end
+        end)
+        return true
+      end,
+    }
+  end, { desc = '[S]earch git changes (staged, unstaged, untracked)' })
+  -- Ripgrep through staged, unstaged, untracked files
+  vim.keymap.set('n', '<leader>sz', function()
+    local root = vim.fn.systemlist('git rev-parse --show-toplevel')[1]
+    if vim.v.shell_error ~= 0 then
+      vim.notify('Not in a git repository', vim.log.levels.WARN)
+      return
+    end
+    local files, seen = {}, {}
+    for _, cmd in ipairs { 'diff --name-only --cached', 'diff --name-only', 'ls-files --others --exclude-standard' } do
+      for _, f in ipairs(vim.fn.systemlist('git -C ' .. vim.fn.shellescape(root) .. ' ' .. cmd)) do
+        local path = root .. '/' .. f
+        if not seen[path] and vim.fn.filereadable(path) == 1 then
+          seen[path] = true
+          table.insert(files, path)
+        end
+      end
+    end
+    if #files == 0 then
+      vim.notify('No changed files', vim.log.levels.INFO)
+      return
+    end
+    builtin.live_grep { search_dirs = files, prompt_title = 'Grep git changes' }
+  end, { desc = 'Grep git changes (staged, unstaged, untracked)' })
   vim.keymap.set('n', '<leader><leader>', builtin.buffers, { desc = '[ ] Find existing buffers' })
 
   -- Add Telescope-based LSP pickers when an LSP attaches to a buffer.
